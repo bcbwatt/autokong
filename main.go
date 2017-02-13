@@ -17,35 +17,20 @@ type Api struct {
 	Groups string `json:"groups"`
 }
 
-var kong = os.Getenv("KONG_URL")
+var kong string
 
 func addACL(api Api) error {
-	log.Println("Adding acl plugin to api:", api.Name)
-
 	data := url.Values{}
 	data.Add("name", "acl")
 	data.Add("config.whitelist", api.Groups)
 
 	kong_url := fmt.Sprintf("%v/apis/%v/plugins", kong, api.Name)
 
-	req, err := http.NewRequest("POST", kong_url, strings.NewReader(data.Encode()))
-	if err != nil {
-		log.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	return nil
+	log.Println("Adding acl plugin to api:", api.Name)
+	return sendRequest("POST", kong_url, data)
 }
 
 func addKeyAuth(api Api) error {
-	log.Println("Adding key-auth plugin to api:", api.Name)
 
 	data := url.Values{}
 	data.Add("name", "key-auth")
@@ -53,42 +38,15 @@ func addKeyAuth(api Api) error {
 
 	kong_url := fmt.Sprintf("%v/apis/%v/plugins", kong, api.Name)
 
-	req, err := http.NewRequest("POST", kong_url, strings.NewReader(data.Encode()))
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	return nil
+	log.Println("Adding key-auth plugin to api:", api.Name)
+	return sendRequest("POST", kong_url, data)
 }
 
 func deleteApi(api Api) error {
-	log.Println("Deleting api:", api.Name)
-
 	kong_url := fmt.Sprintf("%v/apis/%v", kong, api.Name)
 
-	req, err := http.NewRequest("DELETE", kong_url, nil)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	return nil
+	log.Println("Deleting api:", api.Name)
+	return sendRequest("DELETE", kong_url, nil)
 }
 
 func registerApi(api Api) error {
@@ -100,7 +58,12 @@ func registerApi(api Api) error {
 
 	kong_url := fmt.Sprintf("%v/apis", kong)
 
-	req, err := http.NewRequest("POST", kong_url, strings.NewReader(data.Encode()))
+	log.Println("Registering API")
+	return sendRequest("POST", kong_url, data)
+}
+
+func sendRequest(method string, kong_url string, data url.Values) error {
+	req, err := http.NewRequest(method, kong_url, strings.NewReader(data.Encode()))
 	if err != nil {
 		log.Println(err)
 		return err
@@ -108,11 +71,11 @@ func registerApi(api Api) error {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := http.DefaultClient.Do(req)
+	defer resp.Body.Close()
 	if err != nil {
 		log.Println(err)
 		return err
 	}
-	defer resp.Body.Close()
 
 	return nil
 }
@@ -139,11 +102,10 @@ func receiveApiDetails(rw http.ResponseWriter, req *http.Request) {
 	log.Println(api.Path)
 	log.Println(api.Groups)
 
-	err = deleteApi(api) // Clear up an existing endpoint with the same name
-	log.Println(err)
-	err = registerApi(api)
-	err = addKeyAuth(api)
-	err = addACL(api)
+	deleteApi(api) // Clear up an existing endpoint with the same name
+	registerApi(api)
+	addKeyAuth(api)
+	addACL(api)
 
 	if err != nil {
 		rw.Write([]byte(fmt.Sprintf("Failed to register the API with error %v", err)))
@@ -154,6 +116,12 @@ func receiveApiDetails(rw http.ResponseWriter, req *http.Request) {
 }
 
 func main() {
+	kong = os.Getenv("KONG_URL")
+	_, err := url.ParseRequestURI(kong)
+	if err != nil {
+		panic("KONG_URL not set or is invalid!")
+	}
+
 	http.HandleFunc("/add", receiveApiDetails)
 	http.HandleFunc("/remove", deleteOldApis)
 	log.Fatal(http.ListenAndServe(":8080", nil))
